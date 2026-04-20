@@ -1,0 +1,30 @@
+# IDE & OS-specific files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Go files
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+server
+golang-service/server
+*.test
+*.out
+golang-service/vendor/
+golang-service/go.work
+
+# Python files
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.env
+
+# Docker data / logs
+postgres_data/
+*.log
