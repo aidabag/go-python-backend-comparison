@@ -3,7 +3,8 @@ from typing import List, Optional
 import asyncpg
 
 from internal.models.models import Order, OrderItem, TopProduct
-from internal.storage.storage import DB_POOL, load_sql_file
+import internal.storage.storage as storage
+from internal.storage.storage import load_sql_file
 
 # Инициализация слоя хранения для сущности заказов
 
@@ -36,12 +37,12 @@ class OrderStorage:
     @staticmethod
     async def get_by_id(order_id: int, include_items: bool) -> Order:
         """Извлечение информации о заказе по уникальному идентификатору."""
-        if DB_POOL is None:
+        if storage.DB_POOL is None:
             raise RuntimeError("database pool not initialized")
 
         query = "SELECT id, status, created_at FROM orders WHERE id = $1"
         
-        async with DB_POOL.acquire() as conn:
+        async with storage.DB_POOL.acquire() as conn:
             try:
                 # Исполнение запроса и чтение данных
                 row = await conn.fetchrow(query, order_id)
@@ -67,7 +68,7 @@ class OrderStorage:
     @staticmethod
     async def list_orders(limit: int, offset: int, status: str, include_items: bool) -> List[Order]:
         """Выгрузка списка заказов с учетом пагинации и фильтрации."""
-        if DB_POOL is None:
+        if storage.DB_POOL is None:
             raise RuntimeError("database pool not initialized")
 
         query = "SELECT id, status, created_at FROM orders"
@@ -86,7 +87,7 @@ class OrderStorage:
 
         orders = []
 
-        async with DB_POOL.acquire() as conn:
+        async with storage.DB_POOL.acquire() as conn:
             try:
                 # Выполнение сформированного запроса
                 rows = await conn.fetch(query, *args)
@@ -170,12 +171,12 @@ class OrderStorage:
     @staticmethod
     async def get_total(order_id: int) -> int:
         """Подсчет общей стоимости заказа."""
-        if DB_POOL is None:
+        if storage.DB_POOL is None:
             raise RuntimeError("database pool not initialized")
 
         query = "SELECT COALESCE(SUM(quantity * price_at_order), 0) FROM order_items WHERE order_id = $1"
         
-        async with DB_POOL.acquire() as conn:
+        async with storage.DB_POOL.acquire() as conn:
             try:
                 # Исполнение запроса агрегации
                 total_val = await conn.fetchval(query, order_id)
@@ -186,7 +187,7 @@ class OrderStorage:
     @staticmethod
     async def get_average_order_value(since: Optional[datetime.datetime], until: Optional[datetime.datetime]) -> float:
         """Вычисление средней стоимости заказа за промежуток времени."""
-        if DB_POOL is None:
+        if storage.DB_POOL is None:
             raise RuntimeError("database pool not initialized")
 
         query = '''
@@ -203,7 +204,7 @@ class OrderStorage:
         # Установка конечного времени расчетного периода
         end_time = until if until is not None else datetime.datetime.now()
 
-        async with DB_POOL.acquire() as conn:
+        async with storage.DB_POOL.acquire() as conn:
             try:
                 # Совершение выборки среднего значения
                 avg = await conn.fetchval(query, start_time, end_time)
@@ -214,7 +215,7 @@ class OrderStorage:
     @staticmethod
     async def get_top_products(limit: int, since: Optional[datetime.datetime], until: Optional[datetime.datetime]) -> List[TopProduct]:
         """Составление списка самых продаваемых товаров."""
-        if DB_POOL is None:
+        if storage.DB_POOL is None:
             raise RuntimeError("database pool not initialized")
 
         query = '''
@@ -232,7 +233,7 @@ class OrderStorage:
         start_time = since if since is not None else datetime.datetime.min
         end_time = until if until is not None else datetime.datetime.now()
 
-        async with DB_POOL.acquire() as conn:
+        async with storage.DB_POOL.acquire() as conn:
             try:
                 # Исполнение запроса топ-списка
                 rows = await conn.fetch(query, start_time, end_time, limit)

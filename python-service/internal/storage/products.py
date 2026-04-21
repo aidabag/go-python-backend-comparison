@@ -1,7 +1,8 @@
 import asyncpg
 from typing import List, Dict, Any, Tuple
 from internal.models.models import Product
-from internal.storage.storage import DB_POOL, load_sql_file
+import internal.storage.storage as storage
+from internal.storage.storage import load_sql_file
 
 # Инициализация слоя хранения для сущности товаров
 
@@ -11,12 +12,12 @@ class ProductStorage:
     @staticmethod
     async def create(product: Product) -> None:
         """Запись нового товара в базу данных."""
-        if DB_POOL is None:
+        if storage.DB_POOL is None:
             raise RuntimeError("database pool not initialized")
             
         # Подготовка текста SQL-запроса вставки
         query = "INSERT INTO products (name, price, stock) VALUES ($1, $2, $3) RETURNING id"
-        async with DB_POOL.acquire() as conn:
+        async with storage.DB_POOL.acquire() as conn:
             try:
                 # Выполнение инструкции и сканирование сгенерированного идентификатора
                 product.id = await conn.fetchval(query, product.name, product.price, product.stock)
@@ -26,12 +27,12 @@ class ProductStorage:
     @staticmethod
     async def get_by_id(product_id: int) -> Product:
         """Извлечение данных товара по уникальному идентификатору."""
-        if DB_POOL is None:
+        if storage.DB_POOL is None:
             raise RuntimeError("database pool not initialized")
             
         # Инициализация текста запроса поиска
         query = "SELECT id, name, price, stock FROM products WHERE id = $1"
-        async with DB_POOL.acquire() as conn:
+        async with storage.DB_POOL.acquire() as conn:
             try:
                 # Исполнение запроса и извлечение полей
                 row = await conn.fetchrow(query, product_id)
@@ -51,7 +52,7 @@ class ProductStorage:
     @staticmethod
     async def list_products(limit: int, offset: int, sort: str) -> List[Product]:
         """Получение списка товаров с применением пагинации и сортировки."""
-        if DB_POOL is None:
+        if storage.DB_POOL is None:
             raise RuntimeError("database pool not initialized")
             
         # Установка сортировки по умолчанию (новые записи в начале)
@@ -74,7 +75,7 @@ class ProductStorage:
         query = f"SELECT id, name, price, stock FROM products ORDER BY {order_by} LIMIT $1 OFFSET $2"
         products = []
         
-        async with DB_POOL.acquire() as conn:
+        async with storage.DB_POOL.acquire() as conn:
             try:
                 # Исполнение запроса выборки
                 rows = await conn.fetch(query, limit, offset)
@@ -95,7 +96,7 @@ class ProductStorage:
     @staticmethod
     async def update(product_id: int, updates: Dict[str, Any]) -> None:
         """Частичное обновление данных товара (PATCH операция)."""
-        if DB_POOL is None:
+        if storage.DB_POOL is None:
             raise RuntimeError("database pool not initialized")
             
         # Проверка наличия полей для обновления
@@ -118,7 +119,7 @@ class ProductStorage:
         # Динамическая склейка SQL-запроса изменения
         query = f"UPDATE products SET {', '.join(set_parts)} WHERE id = ${arg_num}"
         
-        async with DB_POOL.acquire() as conn:
+        async with storage.DB_POOL.acquire() as conn:
             try:
                 # Исполнение инструкции обновления
                 await conn.execute(query, *args)
@@ -128,13 +129,13 @@ class ProductStorage:
     @staticmethod
     async def delete(product_id: int) -> None:
         """Удаление товара из базы данных."""
-        if DB_POOL is None:
+        if storage.DB_POOL is None:
             raise RuntimeError("database pool not initialized")
             
         # Проверка использования товара в оформленных заказах
         check_query = "SELECT COUNT(*) FROM order_items WHERE product_id = $1"
         
-        async with DB_POOL.acquire() as conn:
+        async with storage.DB_POOL.acquire() as conn:
             try:
                 # Исполнение запроса подсчета связанных записей
                 count = await conn.fetchval(check_query, product_id)
