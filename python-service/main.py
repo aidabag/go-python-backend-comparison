@@ -94,5 +94,6 @@ if __name__ == "__main__":
         host="0.0.0.0", 
         port=int(AppConfig.service_port), 
         workers=4,
-        log_level="info"
+        log_level="warning",
+        access_log=False
     )
