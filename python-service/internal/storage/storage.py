@@ -46,5 +46,5 @@ def load_sql_file(filename: str) -> str:
         parent_dir = os.path.dirname(current_dir)
         if parent_dir == current_dir:
             # Достижение корня файловой системы
-            raise FileNotFoundError(f"Директория sql не найдена. Ошибка извлечения {filename}")
+            raise FileNotFoundError(f"sql file not found: {filename}")
         current_dir = parent_dir
