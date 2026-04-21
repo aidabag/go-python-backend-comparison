@@ -12,11 +12,14 @@ async def init_db(dsn: str, max_conn: int) -> None:
     Создание объекта пула и его сохранение в глобальном пространстве имен.
     """
     global DB_POOL
+    pid = os.getpid()
+    print(f"[PID {pid}] Initializing database pool (max_conn={max_conn})")
     DB_POOL = await asyncpg.create_pool(
         dsn=dsn,
         min_size=1,
         max_size=max_conn
     )
+    print(f"[PID {pid}] Database pool initialized [ID: {id(DB_POOL)}]")
 
 async def close_db() -> None:
     """

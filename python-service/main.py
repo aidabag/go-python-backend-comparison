@@ -8,6 +8,7 @@ from starlette.responses import JSONResponse, Response
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 
 from internal.config.config import AppConfig
+import internal.storage.storage as storage
 from internal.storage.storage import init_db, close_db
 from internal.handlers.products import ProductHandler
 from internal.handlers.orders import OrderHandler
@@ -19,7 +20,9 @@ from internal.middleware.middleware import LoggingMiddleware
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
 async def health_handler(request: Request) -> Response:
-    """Настройка конечных точек состояния."""
+    """ Настройка конечных точек состояния с проверкой готовности БД. """
+    if storage.DB_POOL is None:
+        return JSONResponse({"status": "error", "message": "database pool not initialized"}, status_code=503)
     return JSONResponse({"status": "ok"})
 
 async def metrics_handler(request: Request) -> Response:
