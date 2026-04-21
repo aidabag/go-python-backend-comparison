@@ -50,11 +50,19 @@ async def apply_migrations() -> None:
         except Exception as e:
             raise Exception(f"failed to apply schema migration: {e}")
 
+# Кэш загруженных SQL-файлов для предотвращения блокирующего чтения с диска
+_sql_cache: dict[str, str] = {}
+
 def load_sql_file(filename: str) -> str:
     """
     Поиск и извлечение SQL-запроса из файловой системы.
-    Реализация алгоритма сканирования директорий верхнего уровня для обнаружения пути sql/.
+    Результат кэшируется в оперативной памяти для устранения
+    блокирующего ввода-вывода при повторных обращениях.
     """
+    # Возврат закэшированного результата при наличии
+    if filename in _sql_cache:
+        return _sql_cache[filename]
+
     current_dir = os.getcwd()
     
     # Итеративный подъем по иерархии папок
@@ -63,10 +71,14 @@ def load_sql_file(filename: str) -> str:
         if os.path.isdir(sql_dir):
             file_path = os.path.join(sql_dir, filename)
             with open(file_path, "r", encoding="utf-8") as file:
-                return file.read()
+                content = file.read()
+                # Сохранение результата в кэш
+                _sql_cache[filename] = content
+                return content
         
         parent_dir = os.path.dirname(current_dir)
         if parent_dir == current_dir:
             # Достижение корня файловой системы
             raise FileNotFoundError(f"sql file not found: {filename}")
         current_dir = parent_dir
+

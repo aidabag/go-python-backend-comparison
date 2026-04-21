@@ -1,5 +1,4 @@
 import datetime
-from dataclasses import dataclass
 from typing import List, Dict, Any, Optional
 import asyncpg
 

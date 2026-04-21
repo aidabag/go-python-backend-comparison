@@ -27,7 +27,7 @@ def load_config() -> Config:
         db_user=os.getenv("DB_USER", "postgres"),
         db_pass=os.getenv("DB_PASS", "postgres"),
         db_name=os.getenv("DB_NAME", "python_service"),
-        db_pool_max_conn=int(os.getenv("DB_POOL_MAX_CONN", "20")),
+        db_pool_max_conn=int(os.getenv("DB_POOL_MAX_CONN", "5")),
         max_tx_retries=int(os.getenv("MAX_TX_RETRIES", "3")),
         service_port=os.getenv("SERVICE_PORT", "8080"),
         metrics_path=os.getenv("METRICS_PATH", "/metrics"),

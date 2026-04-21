@@ -1,6 +1,7 @@
 version: '3.8'
 
 services:
+  # --- СТЕК GO ---
   postgres_go:
     image: postgres:15-alpine
     container_name: postgres_go
@@ -48,5 +49,53 @@ services:
           cpus: "4.0"
           memory: 3g
 
+  # --- СТЕК PYTHON ---
+  postgres_python:
+    image: postgres:15-alpine
+    container_name: postgres_python
+    environment:
+      POSTGRES_DB: backend_comparison
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "55434:5432"
+    volumes:
+      - postgres_python_data:/var/lib/postgresql/data
+      - ./sql/migrations:/docker-entrypoint-initdb.d/migrations
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  python-service:
+    build:
+      context: .
+      dockerfile: python-service/Dockerfile
+    container_name: python-service
+    environment:
+      DB_HOST: postgres_python
+      DB_PORT: 5432
+      DB_NAME: backend_comparison
+      DB_USER: postgres
+      DB_PASS: postgres
+      SERVICE_PORT: 8080
+      MAX_TX_RETRIES: 3
+      DB_POOL_MAX_CONN: 5
+      METRICS_PATH: /metrics
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres_python:
+        condition: service_healthy
+    volumes:
+      - ./sql:/app/sql:ro
+    deploy:
+      resources:
+        limits:
+          cpus: "4.0"
+          memory: 3g
+
 volumes:
   postgres_go_data:
+  postgres_python_data:
