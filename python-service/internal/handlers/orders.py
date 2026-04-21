@@ -16,6 +16,8 @@ def _serialize_response(data: Any) -> Any:
     elif isinstance(data, datetime.datetime):
         # Преобразование метки времени в формат RFC3339
         return data.isoformat().replace("+00:00", "Z")
+    elif isinstance(data, float) and data.is_integer():
+        return int(data)
     elif dataclasses.is_dataclass(data):
         return _serialize_response(dataclasses.asdict(data))
     return data
