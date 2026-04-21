@@ -3,21 +3,11 @@ from dataclasses import dataclass
 from typing import List, Dict, Any, Optional
 import asyncpg
 
-from internal.models.models import Order, OrderItem, TopProduct
+from internal.models.models import Order, OrderItem, TopProduct, OrderSummary
 from internal.storage.orders import OrderStorage
 from internal.storage.products import ProductStorage
 from internal.storage.transaction import with_retry_transaction
 
-# Структура сводного отчета по заказу.
-@dataclass
-class OrderSummary:
-    order_id: int
-    status: str
-    created_at: datetime.datetime
-    items: List[OrderItem]
-    total: int
-    total_items: int
-    total_positions: int
 
 # Реализация модуля бизнес-логики заказов.
 

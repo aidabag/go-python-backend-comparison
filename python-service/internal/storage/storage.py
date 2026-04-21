@@ -28,6 +28,28 @@ async def close_db() -> None:
         await DB_POOL.close()
         DB_POOL = None
 
+async def apply_migrations() -> None:
+    """
+    Исполнение миграций схемы базы данных при старте сервиса.
+    Логика аналогична Golang-сервису: чтение 001_schema.sql и выполнение.
+    """
+    if DB_POOL is None:
+        raise RuntimeError("database pool not initialized")
+
+    try:
+        # Чтение скрипта миграций через общий загрузчик
+        schema = load_sql_file(os.path.join("migrations", "001_schema.sql"))
+    except Exception as e:
+        raise Exception(f"failed to load schema migration: {e}")
+
+    async with DB_POOL.acquire() as conn:
+        try:
+            # Выполнение инструкций создания таблиц
+            await conn.execute(schema)
+            print("Successfully applied database migrations")
+        except Exception as e:
+            raise Exception(f"failed to apply schema migration: {e}")
+
 def load_sql_file(filename: str) -> str:
     """
     Поиск и извлечение SQL-запроса из файловой системы.

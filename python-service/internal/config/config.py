@@ -13,6 +13,7 @@ class Config:
     db_name: str
     db_pool_max_conn: int
     max_tx_retries: int
+    service_port: str
     metrics_path: str
 
 def load_config() -> Config:
@@ -25,9 +26,10 @@ def load_config() -> Config:
         db_port=os.getenv("DB_PORT", "5432"),
         db_user=os.getenv("DB_USER", "postgres"),
         db_pass=os.getenv("DB_PASS", "postgres"),
-        db_name=os.getenv("DB_NAME", "backend_comparison"),
-        db_pool_max_conn=int(os.getenv("DB_POOL_MAX_CONN", "50")),
-        max_tx_retries=int(os.getenv("MAX_TX_RETRIES", "10")),
+        db_name=os.getenv("DB_NAME", "python_service"),
+        db_pool_max_conn=int(os.getenv("DB_POOL_MAX_CONN", "20")),
+        max_tx_retries=int(os.getenv("MAX_TX_RETRIES", "3")),
+        service_port=os.getenv("SERVICE_PORT", "8080"),
         metrics_path=os.getenv("METRICS_PATH", "/metrics"),
     )
 
