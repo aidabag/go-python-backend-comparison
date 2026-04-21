@@ -4,7 +4,7 @@ FROM python:3.12-alpine AS builder
 WORKDIR /app
 
 # Установка системных зависимостей для сборки psutil и asyncpg
-RUN apk --no-cache add gcc musl-dev python3-dev postgresql-dev
+RUN apk --no-cache add gcc musl-dev python3-dev postgresql-dev linux-headers
 
 # Создание виртуального окружения
 RUN python -m venv /opt/venv
