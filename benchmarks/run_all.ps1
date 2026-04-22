@@ -2,31 +2,41 @@
 $ScenarioNames = @("s1_browsing", "s2_orders", "s3_admin", "s4_analytics", "s5_mixed")
 $ResultsDir = "benchmarks/results"
 
-function Run-Tests($Service, $LangKey) {
-    Write-Host "`n>>> Initializing tests for $Service ($LangKey)..." -ForegroundColor Cyan
-    
-    # Restart containers with volume cleanup
-    docker-compose down -v
-    docker-compose up -d --build $Service
-    
+function Wait-ForHealthy($Service) {
     Write-Host "Waiting for service to be healthy..."
-    while ($(docker inspect --format='{{.State.Health.Status}}' $Service) -ne "healthy") {
+    $attempts = 0
+    while ($attempts -lt 60) {
+        $status = docker inspect --format='{{.State.Health.Status}}' $Service 2>$null
+        if ($status -eq "healthy") {
+            Write-Host "Service $Service is READY!" -ForegroundColor Green
+            return
+        }
         Start-Sleep -Seconds 2
+        $attempts++
     }
-    Write-Host "Service $Service is READY!" -ForegroundColor Green
+    Write-Host "WARNING: Service did not become healthy in time!" -ForegroundColor Red
+}
 
-    # Execute scenarios
+function Run-Tests($Service, $LangKey) {
+    Write-Host "`n>>> Starting test phase for $Service ($LangKey)..." -ForegroundColor Cyan
+
     foreach ($Scenario in $ScenarioNames) {
+        Write-Host "`n--- Scenario: $Scenario ---" -ForegroundColor Yellow
+
+        # Full reset before EVERY scenario: clean DB volumes + rebuild
+        Write-Host "Resetting environment (clean database)..." -ForegroundColor DarkGray
+        docker-compose down -v 2>$null
+        docker-compose up -d --build $Service
+        Wait-ForHealthy $Service
+
+        # Run k6 test
         $OutputFile = "$ResultsDir/${Scenario}_$LangKey.json"
-        Write-Host "--- Running scenario: $Scenario ---" -ForegroundColor Yellow
-        
-        # Run k6 via Docker
         docker run --rm --network host -v ${PWD}:/app -i grafana/k6 run /app/benchmarks/scenarios/$Scenario.js --out json=/app/$OutputFile
-        
+
         Write-Host "Done." -ForegroundColor Gray
         Read-Host "Press Enter to continue (Cooling break)..."
     }
-    
+
     docker-compose down -v
 }
 
