@@ -28,13 +28,19 @@ def parse_k6_json(file_path):
             if line_data.get('type') == 'Point' and line_data.get('metric') == 'http_req_duration':
                 point = line_data['data']
                 tags = point.get('tags', {})
+                value = point['value']
+                # Filter out negative values: WSL2/Docker Desktop clock sync artifact on Windows.
+                # Negative durations are physically impossible and skew statistics (min metric).
+                if value < 0:
+                    continue
                 data.append({
                     'timestamp': point['time'],
-                    'value': point['value'],
+                    'value': value,
                     'method': tags.get('method', 'unknown'),
                     'name': tags.get('name', 'unknown'),
                     'status': tags.get('status', 'unknown')
                 })
+
                 
     if not data:
         return None

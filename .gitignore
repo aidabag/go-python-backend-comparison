@@ -29,3 +29,5 @@ venv/
 # Docker data / logs
 postgres_data/
 *.log
+
+benchmarks/results/

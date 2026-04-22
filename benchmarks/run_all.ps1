@@ -1,4 +1,13 @@
 # Benchmarking runner script (English version for encoding safety)
+# Usage:
+#   .\benchmarks\run_all.ps1                             -> both services
+#   .\benchmarks\run_all.ps1 -Service golang-service     -> Go only
+#   .\benchmarks\run_all.ps1 -Service python-service     -> Python only
+param(
+    [ValidateSet('python-service','golang-service','both')]
+    [string]$Service = 'both'
+)
+
 $ScenarioNames = @("s1_browsing", "s2_orders", "s3_admin", "s4_analytics", "s5_mixed")
 $ResultsDir = "benchmarks/results"
 
@@ -26,7 +35,7 @@ function Run-Tests($Service, $LangKey) {
         # Full reset before EVERY scenario: clean DB volumes + rebuild
         Write-Host "Resetting environment (clean database)..." -ForegroundColor DarkGray
         docker-compose down -v 2>$null
-        docker-compose up -d --build $Service
+        docker-compose up -d $Service
         Wait-ForHealthy $Service
 
         # Run k6 test
@@ -40,21 +49,32 @@ function Run-Tests($Service, $LangKey) {
     docker-compose down -v
 }
 
-# Cleanup old results
-if (Test-Path $ResultsDir) { Remove-Item -Recurse $ResultsDir }
-New-Item -ItemType Directory -Path "$ResultsDir/charts"
+# Cleanup: wipe all only for 'both'; otherwise remove only that service's files
+if ($Service -eq 'both') {
+    if (Test-Path $ResultsDir) { Remove-Item -Recurse $ResultsDir }
+} else {
+    $langKey = if ($Service -eq 'golang-service') { 'go' } else { 'py' }
+    foreach ($s in $ScenarioNames) { Remove-Item -Force "$ResultsDir/${s}_$langKey.json" -ErrorAction SilentlyContinue }
+}
+New-Item -ItemType Directory -Path "$ResultsDir/charts" -Force | Out-Null
 
 # Phase 1: Python
-Run-Tests "python-service" "py"
+if ($Service -eq 'both' -or $Service -eq 'python-service') {
+    Run-Tests "python-service" "py"
+}
 
-Write-Host "`n========================================================" -ForegroundColor Magenta
-Write-Host "PHASE 1 (PYTHON) COMPLETE. LET THE COMPUTER COOL DOWN." -ForegroundColor Magenta
-Write-Host "Rest for 5-10 minutes is recommended." -ForegroundColor Magenta
-Write-Host "========================================================`n" -ForegroundColor Magenta
-Read-Host "Press Enter to start Phase 2 (Go testing)..."
+if ($Service -eq 'both') {
+    Write-Host "`n========================================================" -ForegroundColor Magenta
+    Write-Host "PHASE 1 (PYTHON) COMPLETE. LET THE COMPUTER COOL DOWN." -ForegroundColor Magenta
+    Write-Host "Rest for 5-10 minutes is recommended." -ForegroundColor Magenta
+    Write-Host "========================================================`n" -ForegroundColor Magenta
+    Read-Host "Press Enter to start Phase 2 (Go testing)..."
+}
 
 # Phase 2: Go
-Run-Tests "golang-service" "go"
+if ($Service -eq 'both' -or $Service -eq 'golang-service') {
+    Run-Tests "golang-service" "go"
+}
 
 # Post-processing
 Write-Host "`n>>> Generating analytical reports..." -ForegroundColor Cyan

@@ -12,7 +12,7 @@ ENV PATH="/opt/venv/bin:$PATH"
 
 # Копирование файла зависимостей
 COPY python-service/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --timeout=120 -r requirements.txt
 
 # Копирование исходного кода приложения
 COPY python-service/ .

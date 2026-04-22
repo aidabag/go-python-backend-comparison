@@ -32,7 +32,7 @@ services:
       DB_USER: postgres
       DB_PASS: postgres
       SERVICE_PORT: 8080
-      LOG_LEVEL: warning
+      LOG_LEVEL: warn
       MAX_TX_RETRIES: 3
       DB_POOL_MAX_CONN: 20
       METRICS_PATH: /metrics
