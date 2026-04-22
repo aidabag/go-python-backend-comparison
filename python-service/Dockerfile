@@ -26,7 +26,7 @@ FROM python:3.12-alpine
 
 WORKDIR /app
 
-RUN apk --no-cache add libpq
+RUN apk --no-cache add libpq curl
 
 # Перенос виртуального окружения
 COPY --from=builder /opt/venv /opt/venv

@@ -6,7 +6,7 @@ import seaborn as sns
 from datetime import datetime
 import argparse
 
-# Регламентация визуального оформления академических графиков
+# Регламентация визуального оформления графиков
 plt.style.use('seaborn-v0_8-paper')
 sns.set_context("paper", font_scale=1.5)
 sns.set_style("whitegrid")

@@ -20,7 +20,7 @@ COPY sql/ /app/sql/
 # Инициализация финального образа
 FROM alpine:latest
 
-RUN apk --no-cache add ca-certificates
+RUN apk --no-cache add ca-certificates curl
 
 WORKDIR /root/
 

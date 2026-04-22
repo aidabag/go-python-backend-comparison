@@ -43,6 +43,11 @@ services:
         condition: service_healthy
     volumes:
       - ./sql:/root/sql:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
     deploy:
       resources:
         limits:
@@ -90,6 +95,11 @@ services:
         condition: service_healthy
     volumes:
       - ./sql:/app/sql:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
     deploy:
       resources:
         limits:
