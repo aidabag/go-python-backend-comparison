@@ -76,16 +76,23 @@ func LoadSQLFile(filename string) (string, error) {
 
 // Исполнение миграций схемы базы данных при старте сервиса
 func (s *Storage) ApplyMigrations() error {
-	// Чтение скрипта миграций
+	// Применение схемы таблиц
 	schema, err := LoadSQLFile("001_schema.sql")
 	if err != nil {
 		return fmt.Errorf("failed to load schema migration: %w", err)
 	}
-	
-	// Выполнение инструкций создания таблиц
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("failed to apply schema migration: %w", err)
 	}
-	
+
+	// Применение тестовых данных
+	seed, err := LoadSQLFile("002_seed.sql")
+	if err != nil {
+		return fmt.Errorf("failed to load seed migration: %w", err)
+	}
+	if _, err := s.db.Exec(seed); err != nil {
+		return fmt.Errorf("failed to apply seed migration: %w", err)
+	}
+
 	return nil
 }

@@ -7,7 +7,7 @@ function Run-Tests($Service, $LangKey) {
     
     # Restart containers with volume cleanup
     docker-compose down -v
-    docker-compose up -d $Service
+    docker-compose up -d --build $Service
     
     Write-Host "Waiting for service to be healthy..."
     while ($(docker inspect --format='{{.State.Health.Status}}' $Service) -ne "healthy") {
