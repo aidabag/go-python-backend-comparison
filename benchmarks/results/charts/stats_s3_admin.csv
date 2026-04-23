@@ -1,0 +1,3 @@
+Language,RPS,Avg (ms),Median (ms),p95 (ms),p99 (ms),Max (ms),Error Rate (%),Total Requests
+Go,109.66,6.24,5.43,12.31,18.56,52.57,0.0,21006
+Python,92.71,218.31,16.48,1015.66,1790.84,3871.87,0.0,18444

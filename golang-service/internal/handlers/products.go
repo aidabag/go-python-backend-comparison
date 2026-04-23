@@ -145,7 +145,7 @@ func (h *ProductHandler) ListProducts(w http.ResponseWriter, r *http.Request) {
 // Обработка запроса на частичное обновление данных товара (PUT / PATCH)
 func (h *ProductHandler) UpdateProduct(w http.ResponseWriter, r *http.Request) {
 	// Проверка разрешенного метода изменения
-	if r.Method != http.MethodPut {
+	if r.Method != http.MethodPut && r.Method != http.MethodPatch {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}

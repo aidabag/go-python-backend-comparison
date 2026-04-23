@@ -75,6 +75,8 @@ func main() {
 			productHandler.GetProduct(w, r)
 		case http.MethodPut:
 			productHandler.UpdateProduct(w, r)
+		case http.MethodPatch:
+			productHandler.UpdateProduct(w, r)
 		case http.MethodDelete:
 			productHandler.DeleteProduct(w, r)
 		default:

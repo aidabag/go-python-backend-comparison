@@ -79,7 +79,7 @@ if ($Service -eq 'both' -or $Service -eq 'golang-service') {
 # Post-processing
 Write-Host "`n>>> Generating analytical reports..." -ForegroundColor Cyan
 foreach ($Scenario in $ScenarioNames) {
-    if (Test-Path "$ResultsDir/${Scenario}_go.json" -And Test-Path "$ResultsDir/${Scenario}_py.json") {
+    if ((Test-Path "$ResultsDir/${Scenario}_go.json") -and (Test-Path "$ResultsDir/${Scenario}_py.json")) {
         python benchmarks/analyze.py --go "$ResultsDir/${Scenario}_go.json" --py "$ResultsDir/${Scenario}_py.json" --name $Scenario
     }
 }
