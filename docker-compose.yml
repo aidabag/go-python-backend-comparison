@@ -5,6 +5,7 @@ services:
   postgres_go:
     image: postgres:15-alpine
     container_name: postgres_go
+    command: postgres -c log_min_duration_statement=100
     environment:
       POSTGRES_DB: backend_comparison
       POSTGRES_USER: postgres
@@ -32,10 +33,11 @@ services:
       DB_USER: postgres
       DB_PASS: postgres
       SERVICE_PORT: 8080
-      LOG_LEVEL: warn
+      LOG_LEVEL: error
       MAX_TX_RETRIES: 3
       DB_POOL_MAX_CONN: 20
       METRICS_PATH: /metrics
+      GODEBUG: gctrace=1
     ports:
       - "8080:8080"
     depends_on:
@@ -51,13 +53,14 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "4.0"
+          cpus: "${APP_CPUS:-4.0}"
           memory: 3g
 
   # --- СТЕК PYTHON ---
   postgres_python:
     image: postgres:15-alpine
     container_name: postgres_python
+    command: postgres -c log_min_duration_statement=100
     environment:
       POSTGRES_DB: backend_comparison
       POSTGRES_USER: postgres
@@ -85,9 +88,11 @@ services:
       DB_USER: postgres
       DB_PASS: postgres
       SERVICE_PORT: 8080
+      LOG_LEVEL: error
       MAX_TX_RETRIES: 3
-      DB_POOL_MAX_CONN: 5
+      DB_POOL_MAX_CONN: 20
       METRICS_PATH: /metrics
+      WORKERS: ${WORKERS:-4}
     ports:
       - "8080:8080"
     depends_on:
@@ -103,7 +108,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "4.0"
+          cpus: "${APP_CPUS:-4.0}"
           memory: 3g
 
 volumes:

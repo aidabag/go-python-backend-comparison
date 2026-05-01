@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import uvicorn
 from starlette.applications import Starlette
 from starlette.routing import Route
@@ -92,11 +93,13 @@ if __name__ == "__main__":
     print(f"Server starting on {addr}")
     
     # Настройка Uvicorn как ASGI сервера
+    # Количество воркеров задаётся через переменную окружения WORKERS
+    workers = int(os.environ.get('WORKERS', '4'))
     uvicorn.run(
         "main:app", 
         host="0.0.0.0", 
         port=int(AppConfig.service_port), 
-        workers=4,
-        log_level="warning",
+        workers=workers,
+        log_level="error",
         access_log=False
     )

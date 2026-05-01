@@ -24,7 +24,7 @@ class LoggingMiddleware(BaseHTTPMiddleware):
             raise e
         finally:
             duration = time.time() - start_time
-            # Журналирование завершения запроса
-            logger.info(f"{request.method} {endpoint} {status_code} {duration:.4f}s")
+            # Журналирование завершения запроса (DEBUG — не нагружает I/O при тестировании)
+            logger.debug(f"{request.method} {endpoint} {status_code} {duration:.4f}s")
             
         return response

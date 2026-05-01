@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/google/uuid"
@@ -11,20 +12,26 @@ import (
 
 // Структура записи журнала активности
 type LogEntry struct {
-	TS        string `json:"ts"`
-	Level     string `json:"level"`
-	Service   string `json:"service"`
-	Endpoint  string `json:"endpoint"`
-	Method    string `json:"method"`
-	Path      string `json:"path"`
-	Status    int    `json:"status"`
-	DurationMs int64 `json:"duration_ms"`
-	RequestID string `json:"request_id,omitempty"`
-	Msg       string `json:"msg"`
+	TS         string `json:"ts"`
+	Level      string `json:"level"`
+	Service    string `json:"service"`
+	Endpoint   string `json:"endpoint"`
+	Method     string `json:"method"`
+	Path       string `json:"path"`
+	Status     int    `json:"status"`
+	DurationMs int64  `json:"duration_ms"`
+	RequestID  string `json:"request_id,omitempty"`
+	Msg        string `json:"msg"`
 }
 
 // Перехват и журналирование HTTP-запросов
 func LoggingMiddleware(next http.Handler) http.Handler {
+	// Определение текущего уровня логирования при инициализации
+	logLevel := os.Getenv("LOG_LEVEL")
+	if logLevel == "" {
+		logLevel = "info"
+	}
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Фиксация времени начала обработки
 		start := time.Now()
@@ -52,18 +59,26 @@ func LoggingMiddleware(next http.Handler) http.Handler {
 			level = "warn"
 		}
 
+		// Фильтрация логов по уровню
+		if logLevel == "error" && level != "error" {
+			return
+		}
+		if logLevel == "warn" && level == "info" {
+			return
+		}
+
 		// Формирование записи журнала
 		logEntry := LogEntry{
-			TS:        time.Now().UTC().Format(time.RFC3339),
-			Level:     level,
-			Service:   "golang-service",
-			Endpoint:  r.URL.Path,
-			Method:    r.Method,
-			Path:      r.URL.Path,
-			Status:    rw.statusCode,
+			TS:         time.Now().UTC().Format(time.RFC3339),
+			Level:      level,
+			Service:    "golang-service",
+			Endpoint:   r.URL.Path,
+			Method:     r.Method,
+			Path:       r.URL.Path,
+			Status:     rw.statusCode,
 			DurationMs: durationMs,
-			RequestID: requestID,
-			Msg:       getMessage(r.Method, r.URL.Path, rw.statusCode),
+			RequestID:  requestID,
+			Msg:        getMessage(r.Method, r.URL.Path, rw.statusCode),
 		}
 
 		// Сериализация и вывод в поток стандартного вывода
