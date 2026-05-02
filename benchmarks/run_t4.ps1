@@ -14,19 +14,12 @@ $ScaleConfigs = @(
     @{ Cpus = "4.0"; Vus = 200; Workers = 4; Label = "4cpu" }
 )
 
-function Wait-ForHealthy($Service) {
-    Write-Host "Waiting for $Service to be healthy..." -ForegroundColor DarkGray
-    $attempts = 0
-    while ($attempts -lt 60) {
-        $status = docker inspect --format='{{.State.Health.Status}}' $Service 2>$null
-        if ($status -eq "healthy") {
-            Write-Host "$Service is READY!" -ForegroundColor Green
-            return
-        }
-        Start-Sleep -Seconds 2
-        $attempts++
-    }
-    Write-Host "WARNING: $Service did not become healthy in time!" -ForegroundColor Red
+function Prompt-VPSReset($Service, $Cpus, $Workers) {
+    Write-Host "`n[VPS ACTION REQUIRED - SCALING TEST]" -ForegroundColor Red
+    Write-Host "Please connect to VPS via SSH and run the following command to scale to $Cpus CPUs:" -ForegroundColor Yellow
+    Write-Host "  export APP_CPUS=$Cpus && export WORKERS=$Workers && docker-compose down -v && docker-compose up -d $Service" -ForegroundColor Cyan
+    Write-Host "Wait a few seconds for the database to seed." -ForegroundColor Yellow
+    Read-Host "Press Enter HERE once the VPS service is ready..."
 }
 
 function Run-ScaleTest($Service, $LangKey) {
@@ -41,23 +34,17 @@ function Run-ScaleTest($Service, $LangKey) {
         for ($run = 1; $run -le $Runs; $run++) {
             Write-Host "`n--- Scale $label ($cpus CPU, $vus VUs) | Run $run/$Runs ---" -ForegroundColor Yellow
 
-            # Установка переменных окружения для docker-compose
-            $env:APP_CPUS = $cpus
-            $env:WORKERS = $workers
-
-            docker-compose down -v 2>$null
-            docker-compose up -d $Service
-            Wait-ForHealthy $Service
+            # Сбрасываем и масштабируем VPS
+            Prompt-VPSReset $Service $cpus $workers
 
             $OutDir = "$ResultsBase/$LangKey/t4_scale/$label"
             New-Item -ItemType Directory -Path $OutDir -Force | Out-Null
 
             $OutputFile = "$OutDir/run$run.json"
-            Write-Host "Running k6 (SCALE_VUS=$vus, CPU=$cpus)..." -ForegroundColor White
+            Write-Host "Running native k6 (SCALE_VUS=$vus, CPU=$cpus)..." -ForegroundColor White
 
-            docker run --rm --network host -v ${PWD}:/app -i grafana/k6 run `
-                /app/benchmarks/scenarios/t4_scale.js `
-                --out json=/app/$OutputFile `
+            k6 run benchmarks/scenarios/t4_scale.js `
+                --out json=$OutputFile `
                 --env BASE_URL=$BaseUrl `
                 --env SCALE_VUS=$vus
 
@@ -66,10 +53,7 @@ function Run-ScaleTest($Service, $LangKey) {
         }
     }
 
-    # Восстановление значений по умолчанию
-    $env:APP_CPUS = "4.0"
-    $env:WORKERS = "4"
-    docker-compose down -v
+    Write-Host "Finished all scale runs for $Service." -ForegroundColor DarkGray
 }
 
 # --- PYTHON ---
