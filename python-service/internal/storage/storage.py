@@ -37,7 +37,15 @@ async def apply_migrations() -> None:
         raise RuntimeError("database pool not initialized")
 
     async with DB_POOL.acquire() as conn:
+        # Блокировка для защиты от гонки между Uvicorn-воркерами
+        await conn.execute("SELECT pg_advisory_lock(1337)")
         try:
+            # Проверка, не инициализировал ли базу другой воркер
+            val = await conn.fetchval("SELECT to_regclass('public.products')")
+            if val is not None:
+                print("Database already initialized by another worker. Skipping.")
+                return
+
             # Выполнение инструкций создания таблиц
             schema = load_sql_file(os.path.join("migrations", "001_schema.sql"))
             await conn.execute(schema)
@@ -49,6 +57,8 @@ async def apply_migrations() -> None:
             print("Successfully applied database seeding")
         except Exception as e:
             raise Exception(f"failed to apply migrations: {e}")
+        finally:
+            await conn.execute("SELECT pg_advisory_unlock(1337)")
 
 # Кэш загруженных SQL-файлов для предотвращения блокирующего чтения с диска
 _sql_cache: dict[str, str] = {}

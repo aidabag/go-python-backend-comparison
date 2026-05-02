@@ -24,7 +24,7 @@ function Run-LoadTest($Service, $LangKey) {
         for ($run = 1; $run -le $Runs; $run++) {
             Write-Host "`n--- $Scenario | Run $run/$Runs ---" -ForegroundColor Yellow
 
-            # Просим пользователя сбросить БД на VPS
+            # Просим сбросить БД на VPS
             Prompt-VPSReset $Service
 
             # Создание директории для результатов

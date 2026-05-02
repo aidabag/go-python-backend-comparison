@@ -4,7 +4,7 @@
  */
 
 // Адрес тестируемого сервиса
-export const BASE_URL = __ENV.BASE_URL || 'http://localhost:8080';
+export const BASE_URL = (__ENV.BASE_URL || 'http://localhost:8080').trim();
 
 // Генерация случайного идентификатора в диапазоне [1, max]
 export function getRandomId(max) {
