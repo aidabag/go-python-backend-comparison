@@ -1,12 +1,37 @@
-import json, os, argparse
-import polars as pl
+"""
+Анализ результатов нагрузочного тестирования Go vs Python.
+Генерация 10 профессиональных графиков (300 DPI).
+
+Запуск:
+    pip install matplotlib scipy numpy
+    python benchmarks/analyze.py
+
+Результаты: benchmarks/results/charts/
+"""
+import os, sys, csv
+import numpy as np
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
-import numpy as np
+from pathlib import Path
 
-# Единые настройки matplotlib (DPI=300 для печати)
+# Добавление пути для импорта парсера
+sys.path.insert(0, str(Path(__file__).parent))
+from analyze_parser import (
+    RESULTS, pool_data, compute_stats, mann_whitney, moving_avg, find_runs
+)
+
+CHARTS = RESULTS / 'charts'
+C_GO, C_PY = '#2E86AB', '#A23B72'
+
+T1_SCENARIOS = ['s_browsing', 's_orders', 's_admin', 's_analytics']
+T1_LABELS = ['Просмотр\nкаталога', 'Оформление\nзаказов', 'Администри-\nрование', 'Аналитика']
+T4_CPUS = ['1cpu', '2cpu', '4cpu']
+T4_NUMS = [1, 2, 4]
+
 plt.rcParams.update({
-    'font.family': 'sans-serif', 'font.size': 12,
+    'font.family': 'DejaVu Sans', 'font.size': 12,
     'axes.titlesize': 14, 'axes.labelsize': 12,
     'xtick.labelsize': 11, 'ytick.labelsize': 11,
     'legend.fontsize': 11, 'figure.dpi': 150,
@@ -14,302 +39,440 @@ plt.rcParams.update({
     'axes.grid': True, 'grid.alpha': 0.3,
 })
 
-# Контрастные цвета, различимые при ч/б печати
-COLOR_GO = '#2E86AB'   # синий — Go
-COLOR_PY = '#A23B72'   # пурпурный — Python
 
-# Названия сценариев с типом HTTP-метода
-SCENARIO_TITLES = {
-    's1_browsing': 'S1: Просмотр каталога (GET)',
-    's2_orders': 'S2: Оформление заказов (POST/GET)',
-    's3_admin': 'S3: Администрирование (PATCH)',
-    's4_analytics': 'S4: Аналитические запросы (GET)',
-    's5_mixed': 'S5: Смешанная нагрузка',
-}
+def fmt(v):
+    if v < 1: return f'{v:.2f}'
+    if v < 100: return f'{v:.1f}'
+    return f'{v:.0f}'
 
 
-def parse_k6_json(file_path):
-    """Парсинг JSON k6. Возвращает (DataFrame, error_rate%)."""
-    print(f"Reading {file_path}...")
-    data = []
-    total_lines = 0
-    error_lines = 0
-    with open(file_path, 'r') as f:
-        for line in f:
-            line_data = json.loads(line)
-            if line_data.get('type') == 'Point' and line_data.get('metric') == 'http_req_duration':
-                point = line_data['data']
-                tags = point.get('tags', {})
-                value = point['value']
-                status = tags.get('status', 'unknown')
-                total_lines += 1
-                # Статус не 2xx = ошибка
-                if not status.startswith('2'):
-                    error_lines += 1
-                # Отрицательные значения — артефакт Docker/WSL2
-                if value < 0:
-                    continue
-                data.append({
-                    'timestamp': point['time'],
-                    'value': value,
-                    'method': tags.get('method', 'unknown'),
-                    'name': tags.get('name', 'unknown'),
-                    'status': status
-                })
-    if not data:
-        return None, 0.0
-
-    df = pl.DataFrame(data)
-    df = df.with_columns(
-        timestamp=pl.col('timestamp').str.to_datetime("%Y-%m-%dT%H:%M:%S%.f%Z")
-    )
-    error_rate = (error_lines / total_lines * 100) if total_lines > 0 else 0.0
-    return df, error_rate
-
-
-def get_title(name):
-    """Название сценария для заголовка графика."""
-    return SCENARIO_TITLES.get(name, name.replace('_', ' ').title())
-
-
-def fmt_val(v):
-    """Форматирование: <1->2 знака, <100->1 знак, >=100->целое."""
-    if v < 1:
-        return f"{v:.2f}"
-    if v < 100:
-        return f"{v:.1f}"
-    return f"{v:.0f}"
-
-
-def moving_avg(times, values, win):
-    """Скользящее среднее через кумулятивные суммы O(n)."""
-    idx = np.argsort(times)
-    t_s = times[idx]; v_s = values[idx]
-    cs = np.cumsum(np.insert(v_s, 0, 0))
-    ma = (cs[win:] - cs[:-win]) / win
-    t_ma = t_s[win // 2: win // 2 + len(ma)]
-    return t_ma, ma
-
-
-def generate_report(go_df, py_df, go_err, py_err, scenario_name, output_dir):
-    """Генерация 5 PNG-графиков + CSV со статистикой для одного сценария."""
-    os.makedirs(output_dir, exist_ok=True)
-    title = get_title(scenario_name)
-
-    # Расчёт статистик: RPS, avg, median, p95, p99, max -> CSV
-    stats = []
-    for name, df, err in [('Go', go_df, go_err), ('Python', py_df, py_err)]:
-        if df is not None:
-            dur = (df['timestamp'].max() - df['timestamp'].min()).total_seconds()
-            rps = len(df) / dur if dur > 0 else 0
-            stats.append({
-                'Language': name, 'RPS': round(rps, 2),
-                'Avg (ms)': round(df['value'].mean(), 2),
-                'Median (ms)': round(df['value'].median(), 2),
-                'p95 (ms)': round(df['value'].quantile(0.95), 2),
-                'p99 (ms)': round(df['value'].quantile(0.99), 2),
-                'Max (ms)': round(df['value'].max(), 2),
-                'Error Rate (%)': round(err, 2),
-                'Total Requests': len(df),
-            })
-    stats_df = pl.DataFrame(stats)
-    print(f"\n--- {title} ---")
-    print(stats_df)
-    stats_df.write_csv(os.path.join(output_dir, f"stats_{scenario_name}.csv"))
-
-    if go_df is None or py_df is None:
-        return
-
-    go_v = go_df['value'].to_numpy()
-    py_v = py_df['value'].to_numpy()
-
-    # ГРАФИК 1: Задержка во времени
-    # Время нормализовано к t=0 (тесты запускались последовательно).
-    # Скользящее среднее + полоса p5-p95 для разброса.
-    fig, ax = plt.subplots(figsize=(12, 5))
-    go_ts = go_df['timestamp'].to_numpy()
-    py_ts = py_df['timestamp'].to_numpy()
-    go_rel = (go_ts - go_ts.min()).astype('timedelta64[ms]').astype(float) / 1000.0
-    py_rel = (py_ts - py_ts.min()).astype('timedelta64[ms]').astype(float) / 1000.0
-    win = max(10, len(go_v) // 100)
-
-    go_t_ma, go_ma = moving_avg(go_rel, go_v, win)
-    py_t_ma, py_ma = moving_avg(py_rel, py_v, win)
-    ax.plot(go_t_ma, go_ma, color=COLOR_GO, linewidth=1.5, label='Go', alpha=0.9)
-    ax.plot(py_t_ma, py_ma, color=COLOR_PY, linewidth=1.5, label='Python', alpha=0.9)
-
-    # Полоса p5-p95 по 50 бинам
-    for rel_t, vals, color in [(go_rel, go_v, COLOR_GO), (py_rel, py_v, COLOR_PY)]:
-        edges = np.linspace(rel_t.min(), rel_t.max(), 51)
-        centers = (edges[:-1] + edges[1:]) / 2
-        p5, p95 = [], []
-        for i in range(50):
-            m = (rel_t >= edges[i]) & (rel_t < edges[i+1])
-            bv = vals[m]
-            if len(bv) > 0:
-                p5.append(np.percentile(bv, 5)); p95.append(np.percentile(bv, 95))
-            else:
-                p5.append(np.nan); p95.append(np.nan)
-        ax.fill_between(centers, p5, p95, color=color, alpha=0.12)
-
-    ax.set_xlabel('Время теста (секунды)')
-    ax.set_ylabel('Задержка (мс)')
-    ax.set_title(f'{title} — Задержка во времени')
-    ax.legend(loc='upper right')
-    fig.savefig(os.path.join(output_dir, f"latency_time_{scenario_name}.png"))
+def save(fig, name):
+    p = CHARTS / name
+    fig.savefig(p)
     plt.close(fig)
+    print(f'  ✓ {name}')
 
-    # ГРАФИК 2: Boxplot (раздельные шкалы Go/Python, без выбросов)
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5), gridspec_kw={'width_ratios': [1, 1]})
-    for ax_i, (vals, color, label) in enumerate([(go_v, COLOR_GO, 'Go'), (py_v, COLOR_PY, 'Python')]):
-        ax = axes[ax_i]
-        bp = ax.boxplot([vals], patch_artist=True, showfliers=False, widths=0.5,
-                        medianprops=dict(color='black', linewidth=2),
-                        whiskerprops=dict(linewidth=1.2), capprops=dict(linewidth=1.2))
-        bp['boxes'][0].set_facecolor(color); bp['boxes'][0].set_alpha(0.7)
-        med = np.median(vals); p95 = np.percentile(vals, 95); p99 = np.percentile(vals, 99)
-        ax.set_title(label, fontsize=14, fontweight='bold')
-        ax.set_ylabel('Задержка (мс)' if ax_i == 0 else '')
-        ax.set_xticks([])
-        txt = f"Med: {fmt_val(med)} мс\np95: {fmt_val(p95)} мс\np99: {fmt_val(p99)} мс"
-        ax.text(0.95, 0.95, txt, transform=ax.transAxes, fontsize=10,
-                va='top', ha='right', bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8))
-    fig.suptitle(f'{title} — Распределение задержки', fontsize=14)
-    fig.tight_layout()
-    fig.savefig(os.path.join(output_dir, f"latency_dist_{scenario_name}.png"))
-    plt.close(fig)
 
-    # ГРАФИК 3: Столбцы метрик (авто-лог. шкала при разнице >20x)
+# ═══════════════════════════════════════════
+# ГРАФИК 1: T1 — RPS по 4 сценариям
+# ═══════════════════════════════════════════
+def chart_t1_rps(t1_data):
     fig, ax = plt.subplots(figsize=(10, 5))
-    metrics = ['Avg', 'Median', 'p95', 'p99', 'Max']
-    go_bars = [np.mean(go_v), np.median(go_v), np.percentile(go_v, 95),
-               np.percentile(go_v, 99), np.max(go_v)]
-    py_bars = [np.mean(py_v), np.median(py_v), np.percentile(py_v, 95),
-               np.percentile(py_v, 99), np.max(py_v)]
-    x = np.arange(len(metrics)); w = 0.35
-    use_log = max(py_bars) / max(max(go_bars), 0.01) > 20
+    x = np.arange(len(T1_SCENARIOS))
+    w = 0.35
 
-    b_go = ax.bar(x - w/2, go_bars, w, label='Go', color=COLOR_GO, alpha=0.85)
-    b_py = ax.bar(x + w/2, py_bars, w, label='Python', color=COLOR_PY, alpha=0.85)
+    go_rps = [t1_data[('go', s)]['rps_mean'] for s in T1_SCENARIOS]
+    py_rps = [t1_data[('python', s)]['rps_mean'] for s in T1_SCENARIOS]
+    go_err = [t1_data[('go', s)]['rps_std'] for s in T1_SCENARIOS]
+    py_err = [t1_data[('python', s)]['rps_std'] for s in T1_SCENARIOS]
+
+    b1 = ax.bar(x - w/2, go_rps, w, label='Go', color=C_GO, alpha=0.85, yerr=go_err, capsize=4)
+    b2 = ax.bar(x + w/2, py_rps, w, label='Python', color=C_PY, alpha=0.85, yerr=py_err, capsize=4)
+
+    for bars, color in [(b1, C_GO), (b2, C_PY)]:
+        for b in bars:
+            ax.text(b.get_x() + b.get_width()/2, b.get_height(),
+                    fmt(b.get_height()), ha='center', va='bottom',
+                    fontsize=9, color=color, fontweight='bold')
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(T1_LABELS)
+    ax.set_ylabel('Запросов в секунду (RPS)')
+    ax.set_title('T1: Пропускная способность по бизнес-сценариям')
+    ax.legend()
+    save(fig, 't1_rps_comparison.png')
+
+
+# ═══════════════════════════════════════════
+# ГРАФИК 2: T1 — p95 задержка по 4 сценариям
+# ═══════════════════════════════════════════
+def chart_t1_p95(t1_data):
+    fig, ax = plt.subplots(figsize=(10, 5))
+    x = np.arange(len(T1_SCENARIOS))
+    w = 0.35
+
+    go_p95 = [np.percentile(t1_data[('go', s)]['values'], 95) for s in T1_SCENARIOS]
+    py_p95 = [np.percentile(t1_data[('python', s)]['values'], 95) for s in T1_SCENARIOS]
+
+    use_log = max(py_p95) / max(max(go_p95), 0.01) > 10
+
+    b1 = ax.bar(x - w/2, go_p95, w, label='Go', color=C_GO, alpha=0.85)
+    b2 = ax.bar(x + w/2, py_p95, w, label='Python', color=C_PY, alpha=0.85)
+
     if use_log:
         ax.set_yscale('log')
         ax.yaxis.set_major_formatter(ticker.ScalarFormatter())
 
-    for bar, color in [(b_go, COLOR_GO), (b_py, COLOR_PY)]:
-        for b in bar:
-            h = b.get_height()
-            ax.text(b.get_x() + b.get_width()/2, h, fmt_val(h),
-                    ha='center', va='bottom', fontsize=9, color=color, fontweight='bold')
+    for bars, color in [(b1, C_GO), (b2, C_PY)]:
+        for b in bars:
+            ax.text(b.get_x() + b.get_width()/2, b.get_height(),
+                    f'{fmt(b.get_height())} мс', ha='center', va='bottom',
+                    fontsize=9, color=color, fontweight='bold')
 
-    ax.set_xticks(x); ax.set_xticklabels(metrics)
-    ax.set_ylabel('Задержка (мс)')
-    ax.set_title(f'{title} — Сравнение метрик')
+    ax.set_xticks(x)
+    ax.set_xticklabels(T1_LABELS)
+    ax.set_ylabel('Задержка p95 (мс)')
+    ax.set_title('T1: Задержка 95-го перцентиля по бизнес-сценариям')
     ax.legend()
-    fig.savefig(os.path.join(output_dir, f"metrics_bar_{scenario_name}.png"))
-    plt.close(fig)
+    save(fig, 't1_p95_comparison.png')
 
-    # ГРАФИК 4: CDF (чем левее кривая — тем быстрее сервис)
+
+# ═══════════════════════════════════════════
+# ГРАФИК 3: T1 — CDF (сетка 2x2)
+# ═══════════════════════════════════════════
+def chart_t1_cdf(t1_data):
+    fig, axes = plt.subplots(2, 2, figsize=(12, 9))
+    titles = ['Просмотр каталога', 'Оформление заказов',
+              'Администрирование', 'Аналитика']
+
+    for idx, sc in enumerate(T1_SCENARIOS):
+        ax = axes[idx // 2][idx % 2]
+        for lang, color in [('go', C_GO), ('python', C_PY)]:
+            v = t1_data[(lang, sc)]['values']
+            # Подвыборка для быстрой отрисовки
+            if len(v) > 10000:
+                v = np.random.choice(v, 10000, replace=False)
+            sv = np.sort(v)
+            cdf = np.arange(1, len(sv)+1) / len(sv) * 100
+            ax.plot(sv, cdf, color=color, linewidth=1.5, label=lang.capitalize())
+
+        for pct, ls in [(50, '--'), (95, '-.'), (99, ':')]:
+            ax.axhline(y=pct, color='gray', linestyle=ls, alpha=0.5, linewidth=0.8)
+
+        ax.set_xlabel('Задержка (мс)')
+        ax.set_ylabel('Процентиль (%)')
+        ax.set_title(titles[idx])
+        ax.legend(loc='lower right')
+        ax.set_ylim(0, 101)
+
+    fig.suptitle('T1: Кумулятивное распределение задержки (CDF)', fontsize=15, y=1.01)
+    fig.tight_layout()
+    save(fig, 't1_cdf_grid.png')
+
+
+# ═══════════════════════════════════════════
+# ГРАФИК 4: T2 — Стресс-тест (timeline)
+# ═══════════════════════════════════════════
+def chart_t2_timeline(go_data, py_data):
+    fig, ax = plt.subplots(figsize=(13, 5))
+
+    # Стадии T2: 0-2m(500), 2-4m(1000), 4-6m(1500), 6-8m(2000), 8-9m(0)
+    stages = [(0,120,'500 VU'), (120,240,'1000 VU'),
+              (240,360,'1500 VU'), (360,480,'2000 VU'), (480,540,'Cool-down')]
+    colors_bg = ['#e8f4f8', '#d1e9f0', '#b8dde8', '#9fd1e0', '#f0f0f0']
+    for (s, e, lbl), c in zip(stages, colors_bg):
+        ax.axvspan(s, e, alpha=0.3, color=c)
+        ax.text((s+e)/2, ax.get_ylim()[1] if ax.get_ylim()[1] > 0 else 100,
+                lbl, ha='center', va='bottom', fontsize=8, color='#555')
+
+    for data, color, label in [(go_data, C_GO, 'Go'), (py_data, C_PY, 'Python')]:
+        if data and 'rel_times' in data:
+            t, ma = moving_avg(data['rel_times'], data['time_values'], window=300)
+            ax.plot(t, ma, color=color, linewidth=1.5, label=label, alpha=0.9)
+
+    ax.set_xlabel('Время теста (секунды)')
+    ax.set_ylabel('Задержка (мс), скользящее среднее')
+    ax.set_title('T2: Стресс-тест — деградация под нагрузкой до 2000 VU')
+    ax.legend(loc='upper left')
+    save(fig, 't2_stress_timeline.png')
+
+
+# ═══════════════════════════════════════════
+# ГРАФИК 5: T3 — Spike-тест (timeline)
+# ═══════════════════════════════════════════
+def chart_t3_timeline(go_data, py_data):
+    fig, ax = plt.subplots(figsize=(13, 5))
+
+    # Стадии T3: spike zones
+    ax.axvspan(60, 100, alpha=0.15, color='red', label='Скачок (1000 VU)')
+    ax.axvspan(220, 260, alpha=0.15, color='red')
+
+    for data, color, label in [(go_data, C_GO, 'Go'), (py_data, C_PY, 'Python')]:
+        if data and 'rel_times' in data:
+            win = min(200, len(data['time_values']) // 20)
+            win = max(win, 10)
+            t, ma = moving_avg(data['rel_times'], data['time_values'], window=win)
+            ax.plot(t, ma, color=color, linewidth=1.5, label=label, alpha=0.9)
+
+    ax.set_xlabel('Время теста (секунды)')
+    ax.set_ylabel('Задержка (мс), скользящее среднее')
+    ax.set_title('T3: Тест на скачки нагрузки — реакция и восстановление')
+    ax.legend(loc='upper left')
+    save(fig, 't3_spike_timeline.png')
+
+
+# ═══════════════════════════════════════════
+# ГРАФИКИ 6-7: T4 — Масштабируемость
+# ═══════════════════════════════════════════
+def chart_t4(t4_data):
+    # График 6: RPS vs CPU
+    fig, ax = plt.subplots(figsize=(8, 5))
+    for lang, color, marker in [('go', C_GO, 'o'), ('python', C_PY, 's')]:
+        rps = []
+        for cpu in T4_CPUS:
+            d = t4_data.get((lang, cpu))
+            rps.append(d['rps_mean'] if d else 0)
+        ax.plot(T4_NUMS, rps, color=color, marker=marker, markersize=8,
+                linewidth=2, label=lang.capitalize())
+        for i, v in enumerate(rps):
+            ax.text(T4_NUMS[i], v, f'  {fmt(v)}', va='bottom', fontsize=9, color=color)
+
+    # Идеальная линейная масштабируемость (пунктир)
+    go_1cpu = t4_data.get(('go', '1cpu'))
+    if go_1cpu:
+        ideal = [go_1cpu['rps_mean'] * n for n in T4_NUMS]
+        ax.plot(T4_NUMS, ideal, '--', color='gray', alpha=0.5, label='Идеальное масштабирование')
+
+    ax.set_xlabel('Количество CPU')
+    ax.set_ylabel('Запросов в секунду (RPS)')
+    ax.set_title('T4: Вертикальная масштабируемость — пропускная способность')
+    ax.set_xticks(T4_NUMS)
+    ax.legend()
+    save(fig, 't4_scalability_rps.png')
+
+    # График 7: p95 vs CPU
+    fig, ax = plt.subplots(figsize=(8, 5))
+    for lang, color, marker in [('go', C_GO, 'o'), ('python', C_PY, 's')]:
+        p95 = []
+        for cpu in T4_CPUS:
+            d = t4_data.get((lang, cpu))
+            p95.append(np.percentile(d['values'], 95) if d else 0)
+        ax.plot(T4_NUMS, p95, color=color, marker=marker, markersize=8,
+                linewidth=2, label=lang.capitalize())
+        for i, v in enumerate(p95):
+            ax.text(T4_NUMS[i], v, f'  {fmt(v)} мс', va='bottom', fontsize=9, color=color)
+
+    ax.set_xlabel('Количество CPU')
+    ax.set_ylabel('Задержка p95 (мс)')
+    ax.set_title('T4: Вертикальная масштабируемость — задержка')
+    ax.set_xticks(T4_NUMS)
+    ax.legend()
+    save(fig, 't4_scalability_p95.png')
+
+
+# ═══════════════════════════════════════════
+# ГРАФИК 8: T5 — Смешанная нагрузка
+# ═══════════════════════════════════════════
+def chart_t5(go_data, py_data):
     fig, ax = plt.subplots(figsize=(10, 5))
-    for vals, color, label in [(go_v, COLOR_GO, 'Go'), (py_v, COLOR_PY, 'Python')]:
-        sv = np.sort(vals)
-        cdf = np.arange(1, len(sv)+1) / len(sv) * 100
-        ax.plot(sv, cdf, color=color, linewidth=2, label=label)
-    for pct, style in [(50, '--'), (95, '-.'), (99, ':')]:
-        ax.axhline(y=pct, color='gray', linestyle=style, alpha=0.5, linewidth=0.8)
-        ax.text(ax.get_xlim()[0], pct + 0.5, f'p{pct}', fontsize=9, color='gray')
-    ax.set_xlabel('Задержка (мс)'); ax.set_ylabel('Процентиль (%)')
-    ax.set_title(f'{title} — Кумулятивное распределение (CDF)')
-    ax.legend(loc='lower right'); ax.set_ylim(0, 101)
-    fig.savefig(os.path.join(output_dir, f"cdf_{scenario_name}.png"))
-    plt.close(fig)
+    metrics = ['RPS', 'Avg', 'p50', 'p95', 'p99']
 
-    # ГРАФИК 5: Сводная таблица с колонкой «Разница» (py/go)
-    fig, ax = plt.subplots(figsize=(10, 4))
+    go_s = compute_stats(go_data)
+    py_s = compute_stats(py_data)
+
+    go_vals = [go_s['rps'], go_s['avg'], go_s['med'], go_s['p95'], go_s['p99']]
+    py_vals = [py_s['rps'], py_s['avg'], py_s['med'], py_s['p95'], py_s['p99']]
+
+    x = np.arange(len(metrics))
+    w = 0.35
+    b1 = ax.bar(x - w/2, go_vals, w, label='Go', color=C_GO, alpha=0.85)
+    b2 = ax.bar(x + w/2, py_vals, w, label='Python', color=C_PY, alpha=0.85)
+
+    use_log = max(py_vals) / max(max(go_vals), 0.01) > 10
+    if use_log:
+        ax.set_yscale('log')
+        ax.yaxis.set_major_formatter(ticker.ScalarFormatter())
+
+    for bars, color in [(b1, C_GO), (b2, C_PY)]:
+        for b in bars:
+            ax.text(b.get_x() + b.get_width()/2, b.get_height(),
+                    fmt(b.get_height()), ha='center', va='bottom',
+                    fontsize=9, color=color, fontweight='bold')
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(metrics)
+    ax.set_ylabel('Значение (RPS / мс)')
+    ax.set_title('T5: Смешанная production-нагрузка — сравнение метрик')
+    ax.legend()
+    save(fig, 't5_mixed_comparison.png')
+
+
+# ═══════════════════════════════════════════
+# ГРАФИК 9: Сводная таблица
+# ═══════════════════════════════════════════
+def chart_summary(all_stats, mw_results):
+    fig, ax = plt.subplots(figsize=(14, 7))
     ax.axis('off')
 
-    row_labels = ['RPS', 'Avg', 'Медиана (p50)', 'p95', 'p99', 'Max', 'Error rate', 'Всего запросов']
-    go_rps = stats[0]['RPS'] if len(stats) > 0 else 0
-    py_rps = stats[1]['RPS'] if len(stats) > 1 else 0
+    headers = ['Тест / Сценарий', 'Go RPS', 'Go p95 (мс)', 'Py RPS', 'Py p95 (мс)',
+               'Разница RPS', 'Разница p95', 'p-value']
+    rows = []
+    for key, (go_s, py_s) in sorted(all_stats.items()):
+        rps_ratio = f'{go_s["rps"]/max(py_s["rps"],0.01):.1f}×'
+        p95_ratio = f'{py_s["p95"]/max(go_s["p95"],0.001):.1f}×'
+        pv = mw_results.get(key, (0, 1.0))[1]
+        pv_str = f'{pv:.2e}' if pv > 0.001 else '< 0.001'
+        rows.append([
+            key, fmt(go_s['rps']), fmt(go_s['p95']),
+            fmt(py_s['rps']), fmt(py_s['p95']),
+            rps_ratio, p95_ratio, pv_str
+        ])
 
-    go_col = [
-        f"{go_rps:.1f}",
-        f"{fmt_val(np.mean(go_v))} мс", f"{fmt_val(np.median(go_v))} мс",
-        f"{fmt_val(np.percentile(go_v, 95))} мс", f"{fmt_val(np.percentile(go_v, 99))} мс",
-        f"{fmt_val(np.max(go_v))} мс", f"{go_err:.2f}%", f"{len(go_v)}",
-    ]
-    py_col = [
-        f"{py_rps:.1f}",
-        f"{fmt_val(np.mean(py_v))} мс", f"{fmt_val(np.median(py_v))} мс",
-        f"{fmt_val(np.percentile(py_v, 95))} мс", f"{fmt_val(np.percentile(py_v, 99))} мс",
-        f"{fmt_val(np.max(py_v))} мс", f"{py_err:.2f}%", f"{len(py_v)}",
-    ]
-
-    def ratio(go_val, py_val):
-        """Во сколько раз Python медленнее Go (или наоборот)."""
-        if go_val == 0 and py_val == 0:
-            return "—"
-        if go_val == 0:
-            return "∞"
-        r = py_val / go_val
-        if r >= 1:
-            return f"{r:.1f}×"
-        return f"{1/r:.1f}× (Go)"
-
-    ratio_vals = [
-        ratio(py_rps, go_rps),  # RPS инвертирован: больше = лучше
-        ratio(np.mean(go_v), np.mean(py_v)),
-        ratio(np.median(go_v), np.median(py_v)),
-        ratio(np.percentile(go_v, 95), np.percentile(py_v, 95)),
-        ratio(np.percentile(go_v, 99), np.percentile(py_v, 99)),
-        ratio(np.max(go_v), np.max(py_v)),
-        ratio(go_err, py_err) if go_err > 0 else ("—" if py_err == 0 else f"∞"),
-        "—",
-    ]
-
-    cell_text = []
-    for i in range(len(row_labels)):
-        cell_text.append([row_labels[i], go_col[i], py_col[i], ratio_vals[i]])
-
-    table = ax.table(
-        cellText=cell_text,
-        colLabels=['Метрика', 'Go', 'Python', 'Разница'],
-        loc='center', cellLoc='center',
-    )
+    table = ax.table(cellText=rows, colLabels=headers, loc='center', cellLoc='center')
     table.auto_set_font_size(False)
-    table.set_fontsize(11)
-    table.scale(1, 1.6)
+    table.set_fontsize(10)
+    table.scale(1, 1.5)
 
-    # Стилизация таблицы
-    for j in range(4):
+    for j in range(len(headers)):
         cell = table[0, j]
         cell.set_facecolor('#2c3e50')
         cell.set_text_props(color='white', fontweight='bold')
-    for i in range(1, len(row_labels) + 1):
-        for j in range(4):
+    for i in range(1, len(rows) + 1):
+        for j in range(len(headers)):
             cell = table[i, j]
             cell.set_facecolor('#f0f4f8' if i % 2 == 0 else '#ffffff')
-            if j == 1:
-                cell.set_text_props(color=COLOR_GO, fontweight='bold')
-            elif j == 2:
-                cell.set_text_props(color=COLOR_PY, fontweight='bold')
 
-    ax.set_title(f'{title} — Сводная таблица', fontsize=14, pad=20)
-    fig.savefig(os.path.join(output_dir, f"table_{scenario_name}.png"))
-    plt.close(fig)
-
-    print(f"  → 5 графиков сохранены в {output_dir}/")
+    ax.set_title('Сводная таблица результатов (все тесты)', fontsize=14, pad=20)
+    save(fig, 'summary_table.png')
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Анализ результатов нагрузочного тестирования Go vs Python"
-    )
-    parser.add_argument("--go", required=True, help="Путь к JSON-файлу результатов Go")
-    parser.add_argument("--py", required=True, help="Путь к JSON-файлу результатов Python")
-    parser.add_argument("--name", required=True, help="Имя сценария (s1_browsing, s2_orders, ...)")
-    args = parser.parse_args()
+# ═══════════════════════════════════════════
+# ГРАФИК 10: Сравнение ошибок T2/T3
+# ═══════════════════════════════════════════
+def chart_errors(err_data):
+    fig, ax = plt.subplots(figsize=(8, 5))
+    tests = list(err_data.keys())
+    x = np.arange(len(tests))
+    w = 0.35
 
-    go_data, go_err = parse_k6_json(args.go)
-    py_data, py_err = parse_k6_json(args.py)
+    go_err = [err_data[t]['go'] for t in tests]
+    py_err = [err_data[t]['python'] for t in tests]
 
-    generate_report(go_data, py_data, go_err, py_err, args.name, "benchmarks/results/charts")
+    b1 = ax.bar(x - w/2, go_err, w, label='Go', color=C_GO, alpha=0.85)
+    b2 = ax.bar(x + w/2, py_err, w, label='Python', color=C_PY, alpha=0.85)
+
+    for bars, color in [(b1, C_GO), (b2, C_PY)]:
+        for b in bars:
+            ax.text(b.get_x() + b.get_width()/2, b.get_height(),
+                    f'{b.get_height():.2f}%', ha='center', va='bottom',
+                    fontsize=9, color=color, fontweight='bold')
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(tests)
+    ax.set_ylabel('Процент ошибок (%)')
+    ax.set_title('Устойчивость к нагрузке — процент отказов')
+    ax.legend()
+    save(fig, 'summary_error_rates.png')
+
+
+# ═══════════════════════════════════════════
+# CSV со всеми метриками
+# ═══════════════════════════════════════════
+def save_csv(all_stats, mw_results):
+    path = CHARTS / 'summary_stats.csv'
+    with open(path, 'w', newline='', encoding='utf-8') as f:
+        w = csv.writer(f)
+        w.writerow(['Test', 'Lang', 'RPS', 'Avg_ms', 'Median_ms', 'p95_ms',
+                     'p99_ms', 'Max_ms', 'Error_%', 'N_requests', 'MW_p_value'])
+        for key, (go_s, py_s) in sorted(all_stats.items()):
+            pv = mw_results.get(key, (0, 1.0))[1]
+            for lang, s in [('Go', go_s), ('Python', py_s)]:
+                w.writerow([key, lang, f'{s["rps"]:.2f}', f'{s["avg"]:.2f}',
+                            f'{s["med"]:.2f}', f'{s["p95"]:.2f}', f'{s["p99"]:.2f}',
+                            f'{s["max"]:.2f}', f'{s["err"]:.2f}', s['n'], f'{pv:.2e}'])
+    print(f'  ✓ summary_stats.csv')
+
+
+# ═══════════════════════════════════════════
+# MAIN
+# ═══════════════════════════════════════════
+def main():
+    os.makedirs(CHARTS, exist_ok=True)
+    all_stats = {}
+    mw_results = {}
+    err_data = {}
+
+    # ── T1: Load Test ──
+    print('\n══ T1: Load Test ══')
+    t1_data = {}
+    for sc in T1_SCENARIOS:
+        for lang in ['go', 'python']:
+            d = pool_data(lang, 't1_load', sc)
+            if d:
+                t1_data[(lang, sc)] = d
+
+    if len(t1_data) == 8:  # 4 сценария × 2 языка
+        chart_t1_rps(t1_data)
+        chart_t1_p95(t1_data)
+        chart_t1_cdf(t1_data)
+
+        for sc in T1_SCENARIOS:
+            key = f'T1/{sc}'
+            go_s = compute_stats(t1_data[('go', sc)])
+            py_s = compute_stats(t1_data[('python', sc)])
+            all_stats[key] = (go_s, py_s)
+            _, p = mann_whitney(t1_data[('go', sc)]['values'],
+                                t1_data[('python', sc)]['values'])
+            mw_results[key] = (0, p)
+    else:
+        print('Неполные данные T1, пропускаем графики')
+
+    # ── T2: Stress Test ──
+    print('\n══ T2: Stress Test ══')
+    t2_go = pool_data('go', 't2_stress', need_time=True)
+    t2_py = pool_data('python', 't2_stress', need_time=True)
+
+    if t2_go and t2_py:
+        chart_t2_timeline(t2_go, t2_py)
+        go_s = compute_stats(t2_go)
+        py_s = compute_stats(t2_py)
+        all_stats['T2/stress'] = (go_s, py_s)
+        err_data['T2 Стресс'] = {'go': go_s['err'], 'python': py_s['err']}
+
+    # ── T3: Spike Test ──
+    print('\n══ T3: Spike Test ══')
+    t3_go = pool_data('go', 't3_spike', need_time=True)
+    t3_py = pool_data('python', 't3_spike', need_time=True)
+
+    if t3_go and t3_py:
+        chart_t3_timeline(t3_go, t3_py)
+        go_s = compute_stats(t3_go)
+        py_s = compute_stats(t3_py)
+        all_stats['T3/spike'] = (go_s, py_s)
+        err_data['T3 Скачок'] = {'go': go_s['err'], 'python': py_s['err']}
+
+    # ── T4: Scalability Test ──
+    print('\n══ T4: Scalability Test ══')
+    t4_data = {}
+    for cpu in T4_CPUS:
+        for lang in ['go', 'python']:
+            d = pool_data(lang, 't4_scale', cpu)
+            if d:
+                t4_data[(lang, cpu)] = d
+
+    if len(t4_data) >= 4:
+        chart_t4(t4_data)
+        for cpu in T4_CPUS:
+            key = f'T4/{cpu}'
+            go_d = t4_data.get(('go', cpu))
+            py_d = t4_data.get(('python', cpu))
+            if go_d and py_d:
+                all_stats[key] = (compute_stats(go_d), compute_stats(py_d))
+
+    # ── T5: Mixed Test ──
+    print('\n══ T5: Mixed Test ══')
+    t5_go = pool_data('go', 't5_mixed')
+    t5_py = pool_data('python', 't5_mixed')
+
+    if t5_go and t5_py:
+        chart_t5(t5_go, t5_py)
+        go_s = compute_stats(t5_go)
+        py_s = compute_stats(t5_py)
+        all_stats['T5/mixed'] = (go_s, py_s)
+        err_data['T5 Смешанная'] = {'go': go_s['err'], 'python': py_s['err']}
+        _, p = mann_whitney(t5_go['values'], t5_py['values'])
+        mw_results['T5/mixed'] = (0, p)
+
+    # ── Сводные графики ──
+    print('\n══ Сводные графики ══')
+    if all_stats:
+        chart_summary(all_stats, mw_results)
+        save_csv(all_stats, mw_results)
+    if err_data:
+        chart_errors(err_data)
+
+    print(f'\n Готово! Все графики в: {CHARTS}/')
+
+
+if __name__ == '__main__':
+    main()
